@@ -135,3 +135,16 @@ from ._src.utils.benchmark import run_benchmark  # noqa: E402
 __all__ += [
     "run_benchmark",
 ]
+
+# ==================================================================================
+# importers
+# ==================================================================================
+# Expose USD importer at top-level utils for convenience: from newton.utils import parse_usd
+# Import lazily-safe: if USD (pxr) isn't installed, we avoid failing import of newton.utils itself.
+try:  # noqa: SIM105
+    from ._src.utils.import_usd import parse_usd  # noqa: PLC0415
+    __all__ += [
+        "parse_usd",
+    ]
+except Exception:  # pragma: no cover - optional dependency (pxr)
+    pass
