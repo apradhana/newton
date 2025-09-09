@@ -76,6 +76,14 @@ class ViewerUSD(ViewerBase):
         self._frame_index = 0
         self._frame_count = 0
 
+        # Optional mapping for updating existing prim transforms from sim state
+        self.path_body_map = None
+        self.path_body_relative_transform = None
+        self.builder_results = None
+        self.parent_translates = None
+        self.parent_inv_Rs = None
+        self.parent_inv_Rns = None
+
         self.set_model(None)
 
     def begin_frame(self, time):
@@ -464,3 +472,241 @@ class ViewerUSD(ViewerBase):
             # Check if a prim exists at the current ancestor path.
             if not stage.GetPrimAtPath(path):
                 stage.DefinePrim(path, "Scope")
+
+    # ------------------------------
+    # Existing-USD-Stage animation API (moved from RendererUsd)
+    # ------------------------------
+
+    def attach_source_stage(self, source_stage: str | Usd.Stage, output_stage: str | Usd.Stage):
+        """
+        Attach a USD stage created from a source stage (flattened copy) as the viewer's stage.
+
+        This mirrors RendererUsd._create_output_stage.
+        """
+        if isinstance(output_stage, str):
+            stage = Usd.Stage.Open(source_stage, Usd.Stage.LoadAll)
+            flattened = stage.Flatten()
+            temp_stage = Usd.Stage.Open(flattened.identifier)
+            exported = temp_stage.ExportToString()
+
+            new_stage = Usd.Stage.CreateNew(output_stage)
+            new_stage.GetRootLayer().ImportFromString(exported)
+            self.stage = new_stage
+        elif isinstance(output_stage, Usd.Stage):
+            self.stage = output_stage
+        else:
+            raise ValueError("output_stage must be a string or a Usd.Stage")
+
+        # carry over fps and basic settings
+        self.stage.SetFramesPerSecond(self.fps)
+        self.stage.SetStartTimeCode(0)
+        return self.stage
+
+    def create_output_stage_from_source(self, source_stage: str | Usd.Stage, output_stage: str | Usd.Stage) -> Usd.Stage:
+        """
+        Create and return a new stage from a source, without attaching it. Provided for convenience.
+        """
+        if isinstance(output_stage, str):
+            stage = Usd.Stage.Open(source_stage, Usd.Stage.LoadAll)
+            flattened = stage.Flatten()
+            temp_stage = Usd.Stage.Open(flattened.identifier)
+            exported = temp_stage.ExportToString()
+
+            new_stage = Usd.Stage.CreateNew(output_stage)
+            new_stage.GetRootLayer().ImportFromString(exported)
+            return new_stage
+        elif isinstance(output_stage, Usd.Stage):
+            return output_stage
+        else:
+            raise ValueError("output_stage must be a string or a Usd.Stage")
+
+    def configure_body_mapping(
+        self,
+        path_body_map: dict,
+        path_body_relative_transform: dict,
+        builder_results: dict,
+    ):
+        """
+        Configure mapping from USD prim paths to body indices and precompute parent inverses.
+        """
+        if path_body_map is None:
+            raise ValueError("path_body_map must be set for configure_body_mapping")
+        if path_body_relative_transform is None:
+            raise ValueError("path_body_relative_transform must be set for configure_body_mapping")
+        if builder_results is None:
+            raise ValueError("builder_results must be set for configure_body_mapping")
+
+        self.path_body_map = path_body_map
+        self.path_body_relative_transform = path_body_relative_transform
+        self.builder_results = builder_results
+
+        # Stage-wide prep to align xform stacks and cache parent inverses
+        self._prepare_output_stage_for_mapping()
+        self._precompute_parents_xform_inverses()
+
+    def update_stage_from_state(self, state):
+        """
+        Update USD prim transforms for all mapped prims using the current simulation state.
+        Mirrors RendererUsd.render_update_stage/_update_usd_stage.
+        """
+        if self.path_body_map is None:
+            raise ValueError("configure_body_mapping must be called before update_stage_from_state")
+
+        # body_q is either a warp array (preferred) or numpy; ensure numpy here
+        body_q = state.body_q.numpy()
+
+        # Use a change block for efficient time-sampled updates
+        with Sdf.ChangeBlock():
+            for prim_path, body_id in self.path_body_map.items():
+                full_xform = body_q[body_id]
+
+                # apply relative xform if any
+                rel_xform = self.path_body_relative_transform.get(prim_path)
+                if rel_xform:
+                    full_xform = wp.mul(full_xform, rel_xform)
+
+                # convert to local space relative to parent (if required)
+                full_xform = self._apply_parents_inverse_xform(full_xform, prim_path)
+
+                # set xform ops at current frame index
+                self._update_usd_prim_xform(prim_path, full_xform)
+
+    # ---- helpers mirrored from RendererUsd ----
+
+    def _apply_parents_inverse_xform(self, full_xform: wp.transform, prim_path: str) -> wp.transform:
+        """
+        Map world-space transform (Warp) to the prim's local space using parent's inverse transform pieces.
+        """
+        current_prim = self.stage.GetPrimAtPath(Sdf.Path(prim_path))
+        parent_path = str(current_prim.GetParent().GetPath())
+
+        if parent_path in self.builder_results["path_body_map"]:
+            return
+
+        parent_translate = self.parent_translates[parent_path]
+        parent_inv_Rot = self.parent_inv_Rs[parent_path]
+        parent_inv_Rot_n = self.parent_inv_Rns[parent_path]
+
+        warp_translate = wp.transform_get_translation(full_xform)
+        warp_quat = wp.transform_get_rotation(full_xform)
+
+        prim_translate = parent_inv_Rot * (warp_translate - parent_translate)
+        prim_quat = parent_inv_Rot_n * warp_quat
+
+        return wp.transform(prim_translate, prim_quat)
+
+    def _update_usd_prim_xform(self, prim_path: str, warp_xform: wp.transform):
+        prim = self.stage.GetPrimAtPath(Sdf.Path(prim_path))
+
+        pos = tuple(map(float, warp_xform[0:3]))
+        rot = tuple(map(float, warp_xform[3:7]))
+
+        xform = UsdGeom.Xform(prim)
+        xform_ops = xform.GetOrderedXformOps()
+
+        if pos is not None:
+            xform_ops[0].Set(Gf.Vec3f(pos[0], pos[1], pos[2]), self._frame_index)
+        if rot is not None:
+            xform_ops[1].Set(Gf.Quatf(rot[3], rot[0], rot[1], rot[2]), self._frame_index)
+
+    def _compute_parents_inverses(self, prim_path: str, time: Usd.TimeCode):
+        prim = self.stage.GetPrimAtPath(Sdf.Path(prim_path))
+        xform = UsdGeom.Xform(prim)
+
+        parent_world = Gf.Matrix4f(xform.ComputeParentToWorldTransform(time))
+        Rpw = wp.mat33(parent_world.ExtractRotationMatrix().GetTranspose())
+        (_, _, s, _, translate_parent_world, _) = parent_world.Factor()
+
+        transpose_Rpwn = wp.mat33(
+            Rpw[0, 0] / s[0],
+            Rpw[1, 0] / s[0],
+            Rpw[2, 0] / s[0],
+            Rpw[0, 1] / s[1],
+            Rpw[1, 1] / s[1],
+            Rpw[2, 1] / s[1],
+            Rpw[0, 2] / s[2],
+            Rpw[1, 2] / s[2],
+            Rpw[2, 2] / s[2],
+        )
+        inv_Rpwn = wp.quat_from_matrix(transpose_Rpwn)
+        inv_Rpw = wp.inverse(Rpw)
+
+        return translate_parent_world, inv_Rpw, inv_Rpwn
+
+    def _precompute_parents_xform_inverses(self):
+        if self.path_body_map is None:
+            raise ValueError("path_body_map must be set before calling _precompute_parents_xform_inverses")
+
+        self.parent_translates = {}
+        self.parent_inv_Rs = {}
+        self.parent_inv_Rns = {}
+
+        time = Usd.TimeCode.Default()
+        for prim_path in self.path_body_map.keys():
+            current_prim = self.stage.GetPrimAtPath(Sdf.Path(prim_path))
+            parent_path = str(current_prim.GetParent().GetPath())
+
+            if parent_path not in self.parent_translates:
+                (
+                    self.parent_translates[parent_path],
+                    self.parent_inv_Rs[parent_path],
+                    self.parent_inv_Rns[parent_path],
+                ) = self._compute_parents_inverses(prim_path, time)
+
+    def _prepare_output_stage_for_mapping(self):
+        if self.path_body_map is None:
+            raise ValueError("path_body_map must be set before calling _prepare_output_stage_for_mapping")
+
+        # Reset time codes to align with viewer timeline
+        self.stage.SetStartTimeCode(0.0)
+        # keep existing end-time; it will be extended in begin_frame
+        self.stage.SetTimeCodesPerSecond(self.fps)
+
+        for prim_path in self.path_body_map.keys():
+            prim = self.stage.GetPrimAtPath(Sdf.Path(prim_path))
+            self._xform_to_tqs(prim)
+
+    @staticmethod
+    def _xform_to_tqs(prim: Usd.Prim, time: Usd.TimeCode | None = None):
+        """
+        Update the transformation stack of a primitive to translate/orient/scale format.
+
+        The original transformation stack is assumed to be a rigid transformation.
+        """
+        if time is None:
+            time = Usd.TimeCode.Default()
+
+        _tqs_op_order = [UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeOrient, UsdGeom.XformOp.TypeScale]
+        _tqs_op_precision = [
+            UsdGeom.XformOp.PrecisionFloat,
+            UsdGeom.XformOp.PrecisionFloat,
+            UsdGeom.XformOp.PrecisionFloat,
+        ]
+
+        xform = UsdGeom.Xform(prim)
+        xform_ops = xform.GetOrderedXformOps()
+
+        # if the order, type, and precision of the transformation is already in our canonical form, then there's no need to change anything.
+        if _tqs_op_order == [op.GetOpType() for op in xform_ops] and _tqs_op_precision == [
+            op.GetPrecision() for op in xform_ops
+        ]:
+            return
+
+        # this assumes no skewing
+        # NB: the rotation coming from Factor is the result of solving an eigenvalue problem. We found wrong answer with non-identity scaling.
+        m_lcl = xform.GetLocalTransformation(time)
+        (_, _, scale, _, translation, _) = m_lcl.Factor()
+
+        t = Gf.Vec3f(translation)
+        q = Gf.Quatf(m_lcl.ExtractRotationQuat())
+        s = Gf.Vec3f(scale)
+
+        # need to reset the transform
+        for op in xform_ops:
+            attr = op.GetAttr()
+            prim.RemoveProperty(attr.GetName())
+
+        xform.ClearXformOpOrder()
+        xform.AddTranslateOp(precision=UsdGeom.XformOp.PrecisionFloat).Set(t)
+        xform.AddOrientOp(precision=UsdGeom.XformOp.PrecisionFloat).Set(q)
+        xform.AddScaleOp(precision=UsdGeom.XformOp.PrecisionFloat).Set(s)
