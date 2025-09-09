@@ -104,8 +104,8 @@ class Simulator:
         builder = newton.ModelBuilder()
         builder.up_axis = newton.Axis.Z
         results = parse_usd(
-            self.in_stage,
             builder,
+            self.in_stage,
             invert_rotations=True,
             collapse_fixed_joints=True,
         )
