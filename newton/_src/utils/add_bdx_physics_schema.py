@@ -346,7 +346,7 @@ if __name__ == "__main__":
     stage = Usd.Stage.Open(args.input_path)
 
     for prim in stage.Traverse():
-        if "proxy" in str(prim.GetPath()):
+        if "proxy" in str(prim.GetPath()) or "CollisionGrpShape" in str(prim.GetPath()):
             continue
         path = str(prim.GetPath()).split("/")
 
@@ -360,16 +360,15 @@ if __name__ == "__main__":
                 apply_collision_api(child)
 
         # TERRAIN (adjust)
-        elif any(name in path[-1] for name in ("terrainMaincol",)):
-            print(f"Applying CollisionAPI to {prim}")
-            collisionAPI = UsdPhysics.CollisionAPI.Apply(prim)
-            collisionAPI.CreateCollisionEnabledAttr(True)
+        elif any(name in path[-1] for name in ("StraightWalkTerrainCollision",)):
+            for child in prim.GetChildren():
+                apply_collision_api(child)
+
 
         # RIGID BODIES (adjust)
-        elif len(path) == 5 and any(name in path[-1] for name in ("gear", "piece", "piston", "vaseGbotCollision")):
+        elif len(path) == 5 and any(name in path[-1] for name in ("gear", "piece", "piston", "vaseGbotCollision",)):
             print(f"Applying RigidBodyAPI and MassAPI to {prim}")
             rigidBodyAPI = UsdPhysics.RigidBodyAPI.Apply(prim)
-            massAPI = UsdPhysics.MassAPI.Apply(prim)
 
             for child in prim.GetChildren():
                 apply_collision_api(child)
