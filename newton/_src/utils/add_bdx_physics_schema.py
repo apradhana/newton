@@ -366,7 +366,7 @@ if __name__ == "__main__":
             collisionAPI.CreateCollisionEnabledAttr(True)
 
         # RIGID BODIES (adjust)
-        elif len(path) == 5 and any(name in path[-1] for name in ("gear", "piece", "piston")):
+        elif len(path) == 5 and any(name in path[-1] for name in ("gear", "piece", "piston", "vaseGbotCollision")):
             print(f"Applying RigidBodyAPI and MassAPI to {prim}")
             rigidBodyAPI = UsdPhysics.RigidBodyAPI.Apply(prim)
             massAPI = UsdPhysics.MassAPI.Apply(prim)
