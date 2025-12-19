@@ -1031,7 +1031,8 @@ class Simulator:
                 )
 
             self.state_0.clear_forces()
-            self.viewer.apply_forces(self.state_0)
+            if self.show_viewer:
+                self.viewer.apply_forces(self.state_0)
             self.integrator.step(self.state_0, self.state_1, None, self.contacts, self.sim_dt)
 
             # swap states
@@ -1132,7 +1133,8 @@ class Simulator:
     def save(self):
         if self.usd_updater is not None:
             self.usd_updater.close()
-        self.viewer.close()
+        if self.show_viewer:
+            self.viewer.close()
 
 
 def print_time_profiler(simulator):
