@@ -464,6 +464,7 @@ class Simulator:
         use_coacd: bool = False,
         enable_timers: bool = False,
         load_visual_shapes: bool = False,
+        use_mesh_approximation: bool = False,
     ):
         def create_stage_from_path(input_path) -> Usd.Stage:
             stage = Usd.Stage.Open(input_path, Usd.Stage.LoadAll)
@@ -475,6 +476,7 @@ class Simulator:
         self.usd_offset = usd_offset
         self.enable_timers = enable_timers
         self.record_path = record_path
+        self.use_mesh_approximation = use_mesh_approximation
 
         self.in_stage = create_stage_from_path(input_path)
 
@@ -539,24 +541,25 @@ class Simulator:
             lantern_shapes = [i for i in shape_indices if "HangingLantern" in builder.shape_key[i]]
             other_shapes = [i for i in shape_indices if i not in lantern_shapes]
 
-            if use_coacd:
-                builder.approximate_meshes(
-                    "coacd",
-                    lantern_shapes,
-                    keep_visual_shapes=True,
-                    threshold=0.15,
-                )
-                builder.approximate_meshes(
-                    "convex_hull",
-                    other_shapes,
-                    keep_visual_shapes=True,
-                )
-            else:
-                builder.approximate_meshes(
-                    "convex_hull",
-                    lantern_shapes + other_shapes,
-                    keep_visual_shapes=True,
-                )
+            if self.use_mesh_approximation:
+                if use_coacd:
+                    builder.approximate_meshes(
+                        "coacd",
+                        lantern_shapes,
+                        keep_visual_shapes=True,
+                        threshold=0.15,
+                    )
+                    builder.approximate_meshes(
+                        "convex_hull",
+                        other_shapes,
+                        keep_visual_shapes=True,
+                    )
+                else:
+                    builder.approximate_meshes(
+                        "convex_hull",
+                        lantern_shapes + other_shapes,
+                        keep_visual_shapes=True,
+                    )
 
         self._collect_animated_colliders(builder, results["path_body_map"])
         if self.integrator_type == IntegratorType.VBD:
@@ -1259,6 +1262,12 @@ if __name__ == "__main__":
         default=False,
     )
     parser.add_argument(
+        "--use_mesh_approximation",
+        help="Use mesh approximation in the collision pipeline",
+        type=bool,
+        default=False,
+    )
+    parser.add_argument(
         "--enable_timers",
         help="Enable timers",
         type=bool,
@@ -1268,7 +1277,7 @@ if __name__ == "__main__":
         "--load_visual_shapes",
         help="Load visual shapes",
         type=bool,
-        default=False,
+        default=True,
     )
 
     args = parser.parse_known_args()[0]
@@ -1292,6 +1301,8 @@ if __name__ == "__main__":
         base_path.mkdir(parents=True, exist_ok=True)
         args.output = str(base_path / path.name)
         print(f'Output path not specified (-o flag). Writing to "{args.output}".')
+    
+    print(f"args.use_mesh_approximation = {args.use_mesh_approximation}")
 
     with wp.ScopedDevice(args.device):
         simulator = Simulator(
@@ -1306,6 +1317,7 @@ if __name__ == "__main__":
             usd_offset=usd_offset,
             use_unified_collision_pipeline=args.use_unified_collision_pipeline,
             use_coacd=args.use_coacd,
+            use_mesh_approximation=args.use_mesh_approximation,
         )
 
         i = 0
