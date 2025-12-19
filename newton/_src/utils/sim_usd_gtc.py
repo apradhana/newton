@@ -151,6 +151,7 @@ class SchemaResolverMJWarp(SchemaResolver):
     mapping: ClassVar[dict[PrimType, dict[str, Attribute]]] = {
         PrimType.SCENE: {
             "use_mujoco_cpu": Attribute("newton:mjwarp:use_mujoco_cpu", False),
+            "use_mujoco_contacts": Attribute("newton:mjwarp:use_mujoco_contacts", True),
             "solver": Attribute("newton:mjwarp:solver", "newton"),
             "integrator": Attribute("newton:mjwarp:integrator", "implicitfast"),
             "iterations": Attribute("newton:mjwarp:iterations", 30),
@@ -608,13 +609,12 @@ class Simulator:
                 rigid_contact_max_per_pair=20,
             )
 
-        if self.integrator_type != IntegratorType.MJWARP:
+        if self.use_newton_contacts:
             self.contacts = self.model.collide(
                 self.state_0,
                 collision_pipeline=self.collision_pipeline,
             )
         else:
-            # use MuJoCo's own collision handling
             self.contacts = None
 
         # NB: body_q will be modified, so initial state will be slightly altered
@@ -726,6 +726,8 @@ class Simulator:
     def _setup_integrator(self):
         """Set up the integrator, and apply attributes parsed from the stage."""
 
+        self.use_newton_contacts = True
+
         if self.integrator_type == IntegratorType.XPBD:
             res = SchemaResolverXPBD()
             R = SchemaResolverManager([res])
@@ -748,9 +750,12 @@ class Simulator:
                 solver_cls=newton.solvers.SolverMuJoCo,
                 defaults={"iterations": self.integrator_iterations},
             )
+            use_mujoco_contacts = R.get_value(self.physics_prim, PrimType.SCENE, "use_mujoco_contacts")
+            # whether to force MuJoCo to use the Newton collision pipeline
             self.integrator = newton.solvers.SolverMuJoCo(
                 self.model, **solver_args, ls_parallel=True, cone="elliptic", impratio=3.0
             )
+            self.use_newton_contacts = not use_mujoco_contacts
 
         elif self.integrator_type == IntegratorType.COUPLED_MPM:
             res = SchemaResolverCoupledMPM()
@@ -819,7 +824,7 @@ class Simulator:
                 self.animated_colliders_joint_qd_start.append(builder.joint_qd_start[joint_id])
                 # Mujoco requires nonzero inertia
                 if self.integrator_type == IntegratorType.MJWARP:
-                    m = 0.1
+                    m = 0.1  # TODO check if we can keep this at zero now that we have kinematic body support in MuJoCo
                     builder.body_mass[body_id] = m
                     builder.body_inv_mass[body_id] = 1 / m
                     builder.body_inertia[body_id] = wp.mat33(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
@@ -1015,7 +1020,7 @@ class Simulator:
             self.viewer.log_lines("picking_line_playback", starts, ends, colors, hidden=False)
 
     def simulate(self):
-        if not self.collide_on_substeps and self.integrator_type != IntegratorType.MJWARP:
+        if not self.collide_on_substeps and self.use_newton_contacts:
             self.contacts = self.model.collide(
                 self.state_0,
                 collision_pipeline=self.collision_pipeline,
@@ -1025,7 +1030,7 @@ class Simulator:
             self._update_animated_colliders()
             self._advance_substep_time()
 
-            if self.collide_on_substeps and self.integrator_type != IntegratorType.MJWARP:
+            if self.collide_on_substeps and self.use_newton_contacts:
                 self.contacts = self.model.collide(
                     self.state_0,
                     collision_pipeline=self.collision_pipeline,
@@ -1269,14 +1274,15 @@ if __name__ == "__main__":
     args = parser.parse_known_args()[0]
 
     # Parse usd_offset argument
-    try:
-        offset_values = [float(x) for x in args.usd_offset.split()]
-        if len(offset_values) != 3:
-            raise ValueError("usd_offset must have exactly 3 values")
-        usd_offset = wp.vec3(*offset_values)
-    except (ValueError, AttributeError) as e:
-        print(f"Error parsing usd_offset: {e}. Using default (0.0, 0.0, 0.0)")
-        usd_offset = wp.vec3(0.0, 0.0, 0.0)
+    # try:
+    #     offset_values = [float(x) for x in args.usd_offset.split()]
+    #     if len(offset_values) != 3:
+    #         raise ValueError("usd_offset must have exactly 3 values")
+    #     usd_offset = wp.vec3(*offset_values)
+    # except (ValueError, AttributeError) as e:
+    #     print(f"Error parsing usd_offset: {e}. Using default (0.0, 0.0, 0.0)")
+    #     usd_offset = wp.vec3(0.0, 0.0, 0.0)
+    usd_offset = wp.vec3(-15.0, -15.0, 0)
 
     if not args.output:
         from pathlib import Path
