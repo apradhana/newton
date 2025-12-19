@@ -349,6 +349,7 @@ if __name__ == "__main__":
         if "proxy" in str(prim.GetPath()) or "CollisionGrpShape" in str(prim.GetPath()):
             continue
         path = str(prim.GetPath()).split("/")
+        print(f"path = {path}")
 
         # ROBOT
         if any(name in path[-1] for name in ("HEAD", "HIP", "KNEE", "PELVIS", "NECK", "FOOT", "ANTENNA")):
@@ -366,7 +367,7 @@ if __name__ == "__main__":
 
 
         # RIGID BODIES (adjust)
-        elif len(path) == 5 and any(name in path[-1] for name in ("gear", "piece", "piston", "vaseGbotCollision",)):
+        elif len(path) == 5 and any(name in path[-1] for name in ("gear", "piece", "piston", "vaseGbotCollision", "vaseGmid", "vaseG")):
             print(f"Applying RigidBodyAPI and MassAPI to {prim}")
             rigidBodyAPI = UsdPhysics.RigidBodyAPI.Apply(prim)
 
