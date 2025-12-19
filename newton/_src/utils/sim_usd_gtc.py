@@ -554,7 +554,7 @@ class Simulator:
                 builder.approximate_meshes(
                     "convex_hull",
                     lantern_shapes + other_shapes,
-                    keep_visual_shapes=False,
+                    keep_visual_shapes=True,
                 )
 
         self._collect_animated_colliders(builder, results["path_body_map"])
@@ -644,7 +644,7 @@ class Simulator:
             self.viewer = newton.viewer.ViewerGL()
 
             self.viewer.set_model(self.model)
-            self.viewer.set_camera(pos=wp.vec3(15.0, 15.0, 0), pitch=-2.6, yaw=-308.0)
+            # self.viewer.set_camera(pos=wp.vec3(15.0, 15.0, 0), pitch=-2.6, yaw=-308.0)
 
             # add a UI callback to toggle the droid is walking
             def toggle_droid_is_walking(imgui):
