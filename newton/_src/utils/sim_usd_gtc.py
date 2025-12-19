@@ -1277,7 +1277,7 @@ if __name__ == "__main__":
         "--load_visual_shapes",
         help="Load visual shapes",
         type=bool,
-        default=True,
+        default=False,
     )
 
     args = parser.parse_known_args()[0]
@@ -1301,8 +1301,6 @@ if __name__ == "__main__":
         base_path.mkdir(parents=True, exist_ok=True)
         args.output = str(base_path / path.name)
         print(f'Output path not specified (-o flag). Writing to "{args.output}".')
-    
-    print(f"args.use_mesh_approximation = {args.use_mesh_approximation}")
 
     with wp.ScopedDevice(args.device):
         simulator = Simulator(
