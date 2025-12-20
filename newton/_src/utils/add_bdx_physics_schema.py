@@ -30,6 +30,19 @@ def parse_xform(prim, local=True):
     pos = mat[3, :3]
     return wp.transform(pos, rot)
 
+def center_to_transform(prim):
+    mesh = UsdGeom.Mesh(prim)
+    if not mesh:
+        return
+
+    print("Centering to transform", prim)
+    vertices = mesh.GetPointsAttr().Get()
+    center = np.mean(vertices, axis=0)
+    mesh.GetPointsAttr().Set(vertices - center)
+
+    xform = UsdGeom.Xformable(prim)
+    xform.AddTranslateOp().Set(Gf.Vec3f(float(center[0]), float(center[1]), float(center[2])))
+
 
 def add_chainlink_joints(stage):
     chains = {
@@ -349,7 +362,6 @@ if __name__ == "__main__":
         if "proxy" in str(prim.GetPath()) or "CollisionGrpShape" in str(prim.GetPath()):
             continue
         path = str(prim.GetPath()).split("/")
-        print(f"path = {path}")
 
         # ROBOT
         if any(name in path[-1] for name in ("HEAD", "HIP", "KNEE", "PELVIS", "NECK", "FOOT", "ANTENNA")):
@@ -361,8 +373,9 @@ if __name__ == "__main__":
                 apply_collision_api(child)
 
         # TERRAIN (adjust)
-        elif any(name in path[-1] for name in ("StraightWalkTerrainCollision",)):
+        elif any(name in path[-1] for name in ("Ground_Collider",)):
             for child in prim.GetChildren():
+                center_to_transform(child)
                 apply_collision_api(child)
 
 
