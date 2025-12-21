@@ -151,14 +151,14 @@ class SchemaResolverMJWarp(SchemaResolver):
     mapping: ClassVar[dict[PrimType, dict[str, Attribute]]] = {
         PrimType.SCENE: {
             "use_mujoco_cpu": Attribute("newton:mjwarp:use_mujoco_cpu", False),
-            "use_mujoco_contacts": Attribute("newton:mjwarp:use_mujoco_contacts", True),
+            "use_mujoco_contacts": Attribute("newton:mjwarp:use_mujoco_contacts", False),
             "solver": Attribute("newton:mjwarp:solver", "newton"),
             "integrator": Attribute("newton:mjwarp:integrator", "implicitfast"),
             "iterations": Attribute("newton:mjwarp:iterations", 30),
             "ls_iterations": Attribute("newton:mjwarp:ls_iterations", 15),
             "save_to_mjcf": Attribute("newton:mjwarp:save_to_mjcf", "sim_usd_mjcf.xml"),
             "contact_stiffness_time_const": Attribute("newton:mjwarp:contact_stiffness_time_const", 0.02),
-            "ncon_per_world": Attribute("newton:mjwarp:ncon_per_world", 150),
+            "nconmax": Attribute("newton:mjwarp:nconmax", 700),
             "njmax": Attribute("newton:mjwarp:njmax", 300),
         },
     }
